@@ -3,6 +3,7 @@ import { Send, Bot, User, ChevronDown, ChevronUp, Database, Sparkles, AlertCircl
 import { DatasetState, ChatMessage } from '../types/data';
 import { executeSqlQuery } from '../utils/sqlEngine';
 import { BarChartComponent } from './charts/BarChartComponent';
+import { saveChatMessageToSupabase } from '../utils/supabaseClient';
 
 interface AskAiScreenProps {
   datasetState: DatasetState;
@@ -105,24 +106,25 @@ export const AskAiScreen: React.FC<AskAiScreenProps> = ({ datasetState }) => {
       };
 
       setMessages(prev => [...prev, agentMsg]);
+      saveChatMessageToSupabase(datasetState.filename || 'dataset', agentMsg);
     } catch (err: any) {
       // Local fallback in case backend or LLM is unreachable
       const fallbackSql = `SELECT * FROM dataset LIMIT 5`;
       const execution = executeSqlQuery(fallbackSql, datasetState.rows);
 
-      setMessages(prev => [
-        ...prev,
-        {
-          id: `agent-${Date.now()}`,
-          sender: 'agent',
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          text: `I executed a direct diagnostic query on your dataset for "${q}". Here are the matching rows:`,
-          sql: fallbackSql,
-          sqlExplanation: 'Selected top representative records from the active dataset.',
-          canAnswer: true,
-          queryResults: execution.data,
-        }
-      ]);
+      const fallbackMsg: ChatMessage = {
+        id: `agent-${Date.now()}`,
+        sender: 'agent',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        text: `I executed a direct diagnostic query on your dataset for "${q}". Here are the matching rows:`,
+        sql: fallbackSql,
+        sqlExplanation: 'Selected top representative records from the active dataset.',
+        canAnswer: true,
+        queryResults: execution.data,
+      };
+
+      setMessages(prev => [...prev, fallbackMsg]);
+      saveChatMessageToSupabase(datasetState.filename || 'dataset', fallbackMsg);
     } finally {
       setIsLoading(false);
     }

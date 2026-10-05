@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { UploadCloud, FileSpreadsheet, Sparkles, CheckCircle2, ArrowRight, Layers, Database, Table } from 'lucide-react';
+import { UploadCloud, FileSpreadsheet, Sparkles, CheckCircle2, ArrowRight, Layers, Database, Table, Cloud } from 'lucide-react';
 import { DatasetState } from '../types/data';
 import { SAMPLE_DATASETS, SampleDataset } from '../utils/sampleDatasets';
 import { parseFile, extractAndCleanSheet, cleanRawRows } from '../utils/dataProcessor';
@@ -10,6 +10,7 @@ interface UploadScreenProps {
   setDatasetState: React.Dispatch<React.SetStateAction<DatasetState>>;
   onAnalyze: (customProblem?: string, customObjective?: string, customDesiredKpis?: string) => Promise<void>;
   workbookRef: React.MutableRefObject<any>;
+  onOpenSupabase?: () => void;
 }
 
 export const UploadScreen: React.FC<UploadScreenProps> = ({
@@ -17,6 +18,7 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({
   setDatasetState,
   onAnalyze,
   workbookRef,
+  onOpenSupabase,
 }) => {
   const [inputMode, setInputMode] = useState<'upload' | 'manual'>('upload');
   const [isDragging, setIsDragging] = useState(false);
@@ -161,6 +163,17 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({
                 {sample.name}
               </button>
             ))}
+
+            {onOpenSupabase && (
+              <button
+                onClick={onOpenSupabase}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 flex items-center gap-1.5"
+                title="Browse or load datasets stored in Supabase"
+              >
+                <Cloud className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Supabase Projects</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -271,6 +284,17 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({
                 </>
               )}
             </button>
+
+            {onOpenSupabase && hasData && (
+              <button
+                type="button"
+                onClick={onOpenSupabase}
+                className="w-full py-2.5 px-4 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold rounded-xl text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer border border-emerald-200 mt-2"
+              >
+                <Cloud className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Save to Supabase Cloud</span>
+              </button>
+            )}
           </div>
         </div>
       ) : (
@@ -423,6 +447,17 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({
                 </>
               )}
             </button>
+
+            {onOpenSupabase && hasData && (
+              <button
+                type="button"
+                onClick={onOpenSupabase}
+                className="w-full py-2.5 px-4 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold rounded-xl text-xs transition-colors flex items-center justify-center gap-2 cursor-pointer border border-emerald-200 mt-2"
+              >
+                <Cloud className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Save to Supabase Cloud</span>
+              </button>
+            )}
           </div>
         </div>
       )}

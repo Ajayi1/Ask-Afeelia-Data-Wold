@@ -12,6 +12,7 @@ import {
   X,
   Download,
   Eye,
+  Cloud,
 } from 'lucide-react';
 import { DatasetState, CustomChartConfig, CustomFilterRule, FilterOperator } from '../types/data';
 import { BarChartComponent } from './charts/BarChartComponent';
@@ -28,11 +29,13 @@ import { executeSqlQuery, calculateFallbackKpi } from '../utils/sqlEngine';
 interface DashboardScreenProps {
   datasetState: DatasetState;
   setDatasetState?: React.Dispatch<React.SetStateAction<DatasetState>>;
+  onOpenSupabase?: () => void;
 }
 
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   datasetState,
   setDatasetState,
+  onOpenSupabase,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
   const [selectedPeriod, setSelectedPeriod] = useState<string>('ALL');
@@ -451,8 +454,19 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           </div>
         </div>
 
-        {/* Action Buttons: Preview then Download */}
+        {/* Action Buttons: Supabase Cloud + Preview then Download */}
         <div className="flex items-center gap-2.5 flex-wrap">
+          {onOpenSupabase && (
+            <button
+              onClick={onOpenSupabase}
+              className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 hover:bg-emerald-100 transition-colors cursor-pointer"
+              title="Store dataset & analysis in Supabase cloud"
+            >
+              <Cloud className="w-4 h-4 text-emerald-600" />
+              <span>Save to Supabase</span>
+            </button>
+          )}
+
           <button
             onClick={handleOpenPdfPreview}
             disabled={!datasetState.analysis}

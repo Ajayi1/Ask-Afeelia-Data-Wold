@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { UploadCloud, LayoutDashboard, Terminal, MessageSquareCode, Database } from 'lucide-react';
+import { UploadCloud, LayoutDashboard, Terminal, MessageSquareCode, Database, Cloud } from 'lucide-react';
 import { DatasetState, AnalysisPackage } from './types/data';
 import { SAMPLE_DATASETS } from './utils/sampleDatasets';
 import { cleanRawRows } from './utils/dataProcessor';
@@ -8,11 +8,20 @@ import { UploadScreen } from './components/UploadScreen';
 import { DashboardScreen } from './components/DashboardScreen';
 import { SqlScreen } from './components/SqlScreen';
 import { AskAiScreen } from './components/AskAiScreen';
+import { SupabaseSyncModal } from './components/SupabaseSyncModal';
+import {
+  saveAnalysisToSupabase,
+  testSupabaseConnection,
+  SUPABASE_CONFIG,
+  SavedProject,
+} from './utils/supabaseClient';
 
 type ActiveTab = 'upload' | 'dashboard' | 'sql' | 'ask_ai';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('upload');
+  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState(false);
+  const [supabaseConnected, setSupabaseConnected] = useState<boolean>(true);
   const workbookRef = useRef<any>(null);
 
   // Initialize with the standard Sales Decline sample dataset
@@ -33,6 +42,13 @@ export default function App() {
     analysis: null,
     isAnalyzing: false,
   });
+
+  // Verify connection to Supabase on mount
+  useEffect(() => {
+    testSupabaseConnection().then(res => {
+      setSupabaseConnected(res.success);
+    });
+  }, []);
 
   // Sync rows to SQL engine whenever rows change
   useEffect(() => {
@@ -107,6 +123,19 @@ export default function App() {
         isAnalyzing: false,
       }));
 
+      // Auto-persist snapshot to Supabase cloud
+      const updatedState = {
+        ...datasetState,
+        businessProblem: problem,
+        objective,
+        desiredKpis,
+        analysis: {
+          ...analysisData,
+          queries: executedQueries,
+        },
+      };
+      saveAnalysisToSupabase(updatedState).catch(err => console.warn('Supabase auto-save background note:', err));
+
       if (switchTab) {
         setActiveTab('dashboard');
       }
@@ -145,66 +174,77 @@ export default function App() {
         return { ...q, results: res.success ? res.data : [] };
       });
 
+      const fallbackPackage = {
+        kpis: [
+          {
+            id: 'kpi-1',
+            title: userTokens[0] || `Total ${pNum.replace(/_/g, ' ').toUpperCase()}`,
+            sql: `SELECT SUM(${pNum}) AS value FROM dataset`,
+            format: 'currency' as const,
+            change: '+12.4% baseline',
+            isPositive: true,
+          },
+          {
+            id: 'kpi-2',
+            title: userTokens[1] || `Average ${sNum.replace(/_/g, ' ').toUpperCase()}`,
+            sql: `SELECT AVG(${sNum}) AS value FROM dataset`,
+            format: 'number' as const,
+            change: '-4.2% variance',
+            isPositive: false,
+          },
+          {
+            id: 'kpi-3',
+            title: userTokens[2] || `Distinct ${pCat.replace(/_/g, ' ').toUpperCase()}`,
+            sql: `SELECT COUNT(DISTINCT ${pCat}) AS value FROM dataset`,
+            format: 'count' as const,
+            change: 'Full coverage',
+            isPositive: true,
+          },
+          {
+            id: 'kpi-4',
+            title: userTokens[3] || 'Dataset Volume',
+            sql: `SELECT COUNT(*) AS value FROM dataset`,
+            format: 'count' as const,
+            change: 'Audited records',
+            isPositive: true,
+          }
+        ],
+        insights: [
+          `Top performing ${pCat} entities account for the majority of cumulative ${pNum}.`,
+          `Divergence in ${sNum} strongly correlates with adverse operational friction.`,
+          `Remediation focused on bottom-quartile segments will yield significant variance recovery.`
+        ],
+        recommendations: [
+          `Initiate focused operational reviews with segment managers.`,
+          `Implement automated alerts on leading indicator thresholds.`,
+          `Reallocate capital to resilient product lines.`
+        ],
+        suggestedQuestions: [
+          `Which ${pCat} generated the highest ${pNum}?`,
+          `Show me top 5 rows sorted by ${pNum}.`,
+          `What is the average ${sNum} across all records?`,
+          `Which segment has the largest variance?`
+        ],
+        queries: fallbackQueries,
+      };
+
       setDatasetState(prev => ({
         ...prev,
         businessProblem: problem,
         objective,
         desiredKpis,
-        analysis: {
-          kpis: [
-            {
-              id: 'kpi-1',
-              title: userTokens[0] || `Total ${pNum.replace(/_/g, ' ').toUpperCase()}`,
-              sql: `SELECT SUM(${pNum}) AS value FROM dataset`,
-              format: 'currency',
-              change: '+12.4% baseline',
-              isPositive: true,
-            },
-            {
-              id: 'kpi-2',
-              title: userTokens[1] || `Average ${sNum.replace(/_/g, ' ').toUpperCase()}`,
-              sql: `SELECT AVG(${sNum}) AS value FROM dataset`,
-              format: 'number',
-              change: '-4.2% variance',
-              isPositive: false,
-            },
-            {
-              id: 'kpi-3',
-              title: userTokens[2] || `Distinct ${pCat.replace(/_/g, ' ').toUpperCase()}`,
-              sql: `SELECT COUNT(DISTINCT ${pCat}) AS value FROM dataset`,
-              format: 'count',
-              change: 'Full coverage',
-              isPositive: true,
-            },
-            {
-              id: 'kpi-4',
-              title: userTokens[3] || 'Dataset Volume',
-              sql: `SELECT COUNT(*) AS value FROM dataset`,
-              format: 'count',
-              change: 'Audited records',
-              isPositive: true,
-            }
-          ],
-          insights: [
-            `Top performing ${pCat} entities account for the majority of cumulative ${pNum}.`,
-            `Divergence in ${sNum} strongly correlates with adverse operational friction.`,
-            `Remediation focused on bottom-quartile segments will yield significant variance recovery.`
-          ],
-          recommendations: [
-            `Initiate focused operational reviews with segment managers.`,
-            `Implement automated alerts on leading indicator thresholds.`,
-            `Reallocate capital to resilient product lines.`
-          ],
-          suggestedQuestions: [
-            `Which ${pCat} generated the highest ${pNum}?`,
-            `Show me top 5 rows sorted by ${pNum}.`,
-            `What is the average ${sNum} across all records?`,
-            `Which segment has the largest variance?`
-          ],
-          queries: fallbackQueries,
-        },
+        analysis: fallbackPackage,
         isAnalyzing: false,
       }));
+
+      // Background persist fallback state
+      saveAnalysisToSupabase({
+        ...datasetState,
+        businessProblem: problem,
+        objective,
+        desiredKpis,
+        analysis: fallbackPackage,
+      }).catch(err => console.warn('Supabase fallback save note:', err));
 
       if (switchTab) {
         setActiveTab('dashboard');
@@ -212,9 +252,29 @@ export default function App() {
     }
   };
 
+  const handleLoadProject = (project: SavedProject) => {
+    const loadedRows = project.rows_data && project.rows_data.length > 0 ? project.rows_data : datasetState.rows;
+    setDatasetState(prev => ({
+      ...prev,
+      filename: project.filename,
+      businessProblem: project.business_problem,
+      objective: project.objective,
+      desiredKpis: project.desired_kpis || '',
+      schema: project.schema || prev.schema,
+      stats: project.stats || prev.stats,
+      rows: loadedRows,
+      analysis: project.analysis_data,
+    }));
+
+    if (loadedRows.length > 0) {
+      loadTableIntoSql(loadedRows);
+    }
+    setActiveTab('dashboard');
+  };
+
   return (
     <div className="min-h-screen bg-white text-[#111111] flex flex-col font-sans">
-      {/* Top Bar Navigation (Spec 4: Simple top bar with four tabs: Upload, Dashboard, SQL, Ask AI) */}
+      {/* Top Bar Navigation */}
       <header className="sticky top-0 z-30 bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 flex items-center justify-between h-16">
           {/* Brand Logo & Name */}
@@ -283,9 +343,21 @@ export default function App() {
             </button>
           </nav>
 
-          {/* Dataset Status Pill */}
-          <div className="hidden md:flex items-center gap-2 text-xs text-[#6B7280]">
-            <div className="flex items-center gap-1 px-2.5 py-1 rounded-full bg-gray-100 text-[#111111] font-mono text-[11px]">
+          {/* Right Status Actions: Supabase Status + Dataset Pill */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsSupabaseModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-emerald-200 bg-emerald-50/80 hover:bg-emerald-100 text-emerald-800 text-xs font-medium transition-colors cursor-pointer"
+              title={`Supabase Cloud: Connected to ${SUPABASE_CONFIG.projectName} (${SUPABASE_CONFIG.projectId})`}
+            >
+              <Cloud className="w-3.5 h-3.5 text-emerald-600" />
+              <span className="hidden sm:inline font-semibold">Supabase</span>
+              <span className={`w-1.5 h-1.5 rounded-full ${supabaseConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+              <span className="font-mono text-[11px] text-emerald-700 hidden lg:inline">{SUPABASE_CONFIG.projectId}</span>
+            </button>
+
+            {/* Dataset Status Pill */}
+            <div className="hidden md:flex items-center gap-1 px-2.5 py-1 rounded-full bg-gray-100 text-[#111111] font-mono text-[11px]">
               <Database className="w-3 h-3 text-[#F97316]" />
               <span className="truncate max-w-[120px]">{datasetState.filename}</span>
             </div>
@@ -301,6 +373,7 @@ export default function App() {
             setDatasetState={setDatasetState}
             onAnalyze={handleAnalyze}
             workbookRef={workbookRef}
+            onOpenSupabase={() => setIsSupabaseModalOpen(true)}
           />
         )}
 
@@ -308,6 +381,7 @@ export default function App() {
           <DashboardScreen
             datasetState={datasetState}
             setDatasetState={setDatasetState}
+            onOpenSupabase={() => setIsSupabaseModalOpen(true)}
           />
         )}
 
@@ -320,11 +394,19 @@ export default function App() {
         )}
       </main>
 
+      {/* Supabase Cloud Sync & Storage Modal */}
+      <SupabaseSyncModal
+        isOpen={isSupabaseModalOpen}
+        onClose={() => setIsSupabaseModalOpen(false)}
+        datasetState={datasetState}
+        onLoadProject={handleLoadProject}
+      />
+
       {/* Subtle Minimal Footer */}
       <footer className="border-t border-gray-100 py-4 text-center text-xs text-[#6B7280] bg-white">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>ASK AFEELIA DATA WORLD — Executive Intelligence & SQL Diagnostics</span>
-          <span>In-Memory SQL Table: dataset • Privacy Protected</span>
+          <span>Supabase Cloud Integration: {SUPABASE_CONFIG.projectId} • In-Memory SQL Table: dataset</span>
         </div>
       </footer>
     </div>

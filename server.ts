@@ -1,5 +1,6 @@
 import express from 'express';
 import { GoogleGenAI } from '@google/genai';
+import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -14,6 +15,11 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Supabase Cloud Configuration
+const SUPABASE_URL = (process.env.SUPABASE_URL || 'https://nsueulauftzwsxlddlzz.supabase.co').replace(/\/rest\/v1\/?$/, '');
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'sb_publishable_zOcrXoNxGzV3eYSCc7JkwQ_H6Y-VFst';
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // Shared Gemini client utility
 const apiKey = process.env.GEMINI_API_KEY || '';
@@ -296,6 +302,61 @@ Return strictly valid JSON:
       error: 'Failed to process question with AI agent',
       details: error.message,
     });
+  }
+});
+
+// GET /api/supabase/status: Returns connection status to Supabase project
+app.get('/api/supabase/status', async (_req, res) => {
+  try {
+    const { error } = await supabase.from('analyses').select('id').limit(1);
+    const isTableMissing = error?.message?.includes('does not exist');
+    res.json({
+      connected: !error || isTableMissing,
+      projectId: 'nsueulauftzwsxlddlzz',
+      projectName: "ajayifayokemi24@gmail.com's Project",
+      projectUrl: SUPABASE_URL,
+      tableReady: !error,
+      notice: isTableMissing ? 'Project reachable. Table "analyses" can be created via SQL Editor.' : 'Active',
+    });
+  } catch (err: any) {
+    res.json({
+      connected: false,
+      error: err.message,
+      projectId: 'nsueulauftzwsxlddlzz',
+    });
+  }
+});
+
+// POST /api/supabase/save: Saves an analysis project record into Supabase
+app.post('/api/supabase/save', async (req, res) => {
+  const { project } = req.body;
+  if (!project) return res.status(400).json({ error: 'Project data is required' });
+
+  try {
+    const { data, error } = await supabase.from('analyses').upsert([project]).select();
+    if (error) {
+      return res.status(200).json({
+        success: false,
+        error: error.message,
+        message: 'Could not write to Supabase table. Client will use local cache backup.',
+      });
+    }
+    return res.json({ success: true, data });
+  } catch (err: any) {
+    return res.json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/supabase/list: Retrieves list of saved projects from Supabase
+app.get('/api/supabase/list', async (_req, res) => {
+  try {
+    const { data, error } = await supabase.from('analyses').select('*').order('created_at', { ascending: false });
+    if (error) {
+      return res.json({ success: false, projects: [], error: error.message });
+    }
+    return res.json({ success: true, projects: data || [] });
+  } catch (err: any) {
+    return res.json({ success: false, projects: [], error: err.message });
   }
 });
 
