@@ -1,0 +1,6 @@
+{
+  "name": "ASK AFEELIA DATA WORLD",
+  "description": "Executive data analytics tool to upload datasets, analyze business problems, generate SQL, dashboards, reports, slides, and query an AI data agent.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
