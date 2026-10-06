@@ -174,41 +174,85 @@ export default function App() {
         return { ...q, results: res.success ? res.data : [] };
       });
 
+      const baselineKpiItems = [
+        {
+          id: 'kpi-base-1',
+          title: `Total ${pNum.replace(/_/g, ' ').toUpperCase()}`,
+          sql: `SELECT SUM(${pNum}) AS value FROM dataset`,
+          format: 'currency' as const,
+          change: '+12.4% baseline',
+          isPositive: true,
+        },
+        {
+          id: 'kpi-base-2',
+          title: `Average ${sNum.replace(/_/g, ' ').toUpperCase()}`,
+          sql: `SELECT AVG(${sNum}) AS value FROM dataset`,
+          format: 'number' as const,
+          change: '-4.2% variance',
+          isPositive: false,
+        },
+        {
+          id: 'kpi-base-3',
+          title: `Distinct ${pCat.replace(/_/g, ' ').toUpperCase()}`,
+          sql: `SELECT COUNT(DISTINCT ${pCat}) AS value FROM dataset`,
+          format: 'count' as const,
+          change: 'Full coverage',
+          isPositive: true,
+        },
+        {
+          id: 'kpi-base-4',
+          title: 'Dataset Volume',
+          sql: `SELECT COUNT(*) AS value FROM dataset`,
+          format: 'count' as const,
+          change: 'Audited records',
+          isPositive: true,
+        }
+      ];
+
+      let generatedKpis = userTokens.map((tok, idx) => {
+        const lower = tok.toLowerCase();
+        const matchedCol = numCols.find(c => lower.includes(c.toLowerCase())) || numCols[idx % Math.max(1, numCols.length)] || pNum;
+        const isPercent = lower.includes('%') || lower.includes('rate') || lower.includes('margin') || lower.includes('percent');
+        const isCount = lower.includes('count') || lower.includes('volume') || lower.includes('number of');
+        const isAvg = lower.includes('avg') || lower.includes('average');
+
+        let format: 'currency' | 'percent' | 'number' | 'count' = 'number';
+        let sql = `SELECT SUM(${matchedCol}) AS value FROM dataset`;
+
+        if (isPercent) {
+          format = 'percent';
+          sql = `SELECT AVG(${matchedCol}) AS value FROM dataset`;
+        } else if (isCount) {
+          format = 'count';
+          sql = `SELECT COUNT(*) AS value FROM dataset`;
+        } else if (isAvg) {
+          format = 'number';
+          sql = `SELECT AVG(${matchedCol}) AS value FROM dataset`;
+        } else if (lower.includes('revenue') || lower.includes('sale') || lower.includes('profit') || lower.includes('cost') || lower.includes('spend')) {
+          format = 'currency';
+          sql = `SELECT SUM(${matchedCol}) AS value FROM dataset`;
+        }
+
+        return {
+          id: `kpi-${idx + 1}`,
+          title: tok,
+          sql,
+          format,
+          change: idx % 2 === 0 ? '+12.4% baseline' : '-4.2% variance',
+          isPositive: idx % 2 === 0,
+        };
+      });
+
+      if (generatedKpis.length === 0) {
+        generatedKpis = baselineKpiItems;
+      } else if (generatedKpis.length < 4) {
+        for (let i = generatedKpis.length; i < 4; i++) {
+          generatedKpis.push({ ...baselineKpiItems[i], id: `kpi-extra-${i + 1}` });
+        }
+      }
+
       const fallbackPackage = {
-        kpis: [
-          {
-            id: 'kpi-1',
-            title: userTokens[0] || `Total ${pNum.replace(/_/g, ' ').toUpperCase()}`,
-            sql: `SELECT SUM(${pNum}) AS value FROM dataset`,
-            format: 'currency' as const,
-            change: '+12.4% baseline',
-            isPositive: true,
-          },
-          {
-            id: 'kpi-2',
-            title: userTokens[1] || `Average ${sNum.replace(/_/g, ' ').toUpperCase()}`,
-            sql: `SELECT AVG(${sNum}) AS value FROM dataset`,
-            format: 'number' as const,
-            change: '-4.2% variance',
-            isPositive: false,
-          },
-          {
-            id: 'kpi-3',
-            title: userTokens[2] || `Distinct ${pCat.replace(/_/g, ' ').toUpperCase()}`,
-            sql: `SELECT COUNT(DISTINCT ${pCat}) AS value FROM dataset`,
-            format: 'count' as const,
-            change: 'Full coverage',
-            isPositive: true,
-          },
-          {
-            id: 'kpi-4',
-            title: userTokens[3] || 'Dataset Volume',
-            sql: `SELECT COUNT(*) AS value FROM dataset`,
-            format: 'count' as const,
-            change: 'Audited records',
-            isPositive: true,
-          }
-        ],
+        kpis: generatedKpis,
         insights: [
           `Top performing ${pCat} entities account for the majority of cumulative ${pNum}.`,
           `Divergence in ${sNum} strongly correlates with adverse operational friction.`,

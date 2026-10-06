@@ -79,16 +79,33 @@ export function synthesizeCalculatedAnswer(
   const primaryNum = numCols[0];
   const primaryCat = catCols[0];
 
-  // Case 1: Single scalar aggregate (e.g. SELECT SUM(sales) AS total_sales)
+  const isLowest = /\b(lowest|bottom|least|minimum|min|worst|smallest|fewest)\b/i.test(question) || /\bASC\b/i.test(sql);
+  const isAverage = /\b(average|avg|mean)\b/i.test(question) || /\bAVG\(/i.test(sql) || (primaryNum && primaryNum.startsWith('avg_'));
+  const isCount = /\b(how many|count|number of|records)\b/i.test(question) || /\bCOUNT\(/i.test(sql) || (primaryNum && primaryNum.includes('count'));
+
+  // Case 1: Single scalar aggregate (e.g. SELECT SUM(sales) AS total_sales, SELECT AVG(return_rate), SELECT COUNT(*))
   if (queryResults.length === 1 && numCols.length >= 1 && catCols.length === 0) {
     const val = queryResults[0][primaryNum];
-    const metricName = primaryNum.replace(/_/g, ' ').replace(/^sum |^avg |^max |^min /i, '').trim();
+    const metricName = primaryNum.replace(/_/g, ' ').replace(/^sum_|^sum |^avg_|^avg |^max_|^max |^min_|^min /i, '').trim();
     const formatted = formatSmartNumber(val, primaryNum);
+    
+    let plainText = `Based on the active dataset calculation, the total **${metricName}** is **${formatted}**.`;
+    let entityLabel = 'OVERALL TOTAL';
+
+    if (isCount) {
+      plainText = `Based on the active dataset calculation, there are **${formatted}** matching records.`;
+      entityLabel = 'RECORD COUNT';
+    } else if (isAverage) {
+      plainText = `Based on the active dataset calculation, the average **${metricName}** is **${formatted}**.`;
+      entityLabel = 'OVERALL AVERAGE';
+    }
+
     return {
-      plainText: `Based on the active dataset calculation, the total **${metricName}** is **${formatted}**.`,
+      plainText,
+      topEntity: entityLabel,
       metricLabel: metricName.toUpperCase(),
       formattedValue: formatted,
-      subtext: `Calculated from dataset records`,
+      subtext: `Calculated from active dataset records`,
     };
   }
 
@@ -98,10 +115,11 @@ export function synthesizeCalculatedAnswer(
     const topEntity = String(topRow[primaryCat] || 'Unknown');
     const topVal = topRow[primaryNum];
     const formattedTopVal = formatSmartNumber(topVal, primaryNum);
-    const metricName = primaryNum.replace(/_/g, ' ').replace(/^sum |^avg |^max |^min /i, '').trim();
+    const metricName = primaryNum.replace(/_/g, ' ').replace(/^sum_|^sum |^avg_|^avg |^max_|^max |^min_|^min /i, '').trim();
     const catName = primaryCat.replace(/_/g, ' ').trim();
 
-    let text = `The **${catName}** with the highest ${metricName} is **${topEntity}** with **${formattedTopVal}**.`;
+    const superlativeWord = isLowest ? 'lowest' : 'highest';
+    let text = `The **${catName}** with the ${superlativeWord} ${metricName} is **${topEntity}** with **${formattedTopVal}**.`;
 
     if (queryResults.length > 1) {
       const secondRow = queryResults[1];
@@ -123,9 +141,13 @@ export function synthesizeCalculatedAnswer(
 
       // Compute variance/difference if numbers
       if (typeof topVal === 'number' && typeof secondVal === 'number' && secondVal > 0) {
-        const diff = topVal - secondVal;
+        const diff = Math.abs(topVal - secondVal);
         const pctDiff = ((diff / secondVal) * 100).toFixed(1);
-        text += ` **${topEntity}** outpaces **${secondEntity}** by ${formatSmartNumber(diff, primaryNum)} (+${pctDiff}%).`;
+        if (!isLowest) {
+          text += ` **${topEntity}** outpaces **${secondEntity}** by ${formatSmartNumber(diff, primaryNum)} (+${pctDiff}%).`;
+        } else {
+          text += ` **${topEntity}** is lower than **${secondEntity}** by ${formatSmartNumber(diff, primaryNum)} (-${pctDiff}%).`;
+        }
       }
     }
 
@@ -134,7 +156,7 @@ export function synthesizeCalculatedAnswer(
       topEntity,
       metricLabel: metricName.toUpperCase(),
       formattedValue: formattedTopVal,
-      subtext: `Highest performing ${catName}`,
+      subtext: `${isLowest ? 'Lowest' : 'Highest'} performing ${catName}`,
     };
   }
 

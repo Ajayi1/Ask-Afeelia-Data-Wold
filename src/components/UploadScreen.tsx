@@ -426,7 +426,7 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({
                 className="w-full px-3.5 py-2.5 text-sm bg-white border border-gray-200 rounded-xl focus:outline-none focus:border-[#F97316] transition-colors"
               />
               <p className="text-[11px] text-[#6B7280]">
-                State the specific metrics you want featured in your 4 executive scorecard cards.
+                State the specific metrics you want featured in your executive scorecard. Add as many as needed, comma-separated (no limit to 4 — e.g. Total Revenue, Return Rate %, Margin %, Units Sold, Churn Rate).
               </p>
             </div>
 

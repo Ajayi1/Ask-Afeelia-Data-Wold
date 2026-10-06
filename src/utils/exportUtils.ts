@@ -607,94 +607,175 @@ export async function generatePptxSlides(datasetState: DatasetState, analysis: A
   );
 
   // ==========================================
-  // SLIDE 3: Executive KPI Scorecard (Exact Figures, Fixed Vertical Bounds)
+  // SLIDE 3: Executive KPI Scorecard (Exact Figures, Unlimited Stated Metrics)
   // ==========================================
+  const allKpis = analysis.kpis || [];
   const slide3 = pptx.addSlide();
   slide3.background = { color: WHITE };
-  addHeader(slide3, 'Executive KPI Scorecard', 'Performance Metrics');
+  addHeader(slide3, 'Executive KPI Scorecard', `${allKpis.length} Stated Target Metrics`);
   addFooter(slide3, 3);
 
-  const kpis = (analysis.kpis || []).slice(0, 4);
-  const cardWidth = 2.65;
-  const startX = 0.8;
-  const gap = 0.33;
+  if (allKpis.length <= 4) {
+    const cardWidth = 2.65;
+    const startX = 0.8;
+    const gap = 0.33;
 
-  kpis.forEach((kpi, idx) => {
-    const xPos = startX + idx * (cardWidth + gap);
-    slide3.addShape(pptx.ShapeType.roundRect, {
-      x: xPos,
-      y: 1.7,
-      w: cardWidth,
-      h: 4.8,
-      fill: { color: CARD_BG },
-      line: { color: 'E5E7EB', width: 1 },
-    });
+    allKpis.forEach((kpi, idx) => {
+      const xPos = startX + idx * (cardWidth + gap);
+      slide3.addShape(pptx.ShapeType.roundRect, {
+        x: xPos,
+        y: 1.7,
+        w: cardWidth,
+        h: 4.8,
+        fill: { color: CARD_BG },
+        line: { color: 'E5E7EB', width: 1 },
+      });
 
-    slide3.addShape(pptx.ShapeType.rect, {
-      x: xPos,
-      y: 1.7,
-      w: cardWidth,
-      h: 0.08,
-      fill: { color: ORANGE },
-    });
+      slide3.addShape(pptx.ShapeType.rect, {
+        x: xPos,
+        y: 1.7,
+        w: cardWidth,
+        h: 0.08,
+        fill: { color: ORANGE },
+      });
 
-    slide3.addText(`METRIC 0${idx + 1}`, {
-      x: xPos + 0.2,
-      y: 1.9,
-      w: cardWidth - 0.4,
-      h: 0.25,
-      fontSize: 9,
-      bold: true,
-      color: ORANGE,
-      fontFace: 'Arial',
-    });
-
-    slide3.addText(kpi.title, {
-      x: xPos + 0.2,
-      y: 2.2,
-      w: cardWidth - 0.4,
-      h: 0.65,
-      fontSize: 11,
-      bold: true,
-      color: BLACK,
-      fontFace: 'Arial',
-    });
-
-    slide3.addText(String(kpi.computedValue || '--'), {
-      x: xPos + 0.2,
-      y: 2.9,
-      w: cardWidth - 0.4,
-      h: 0.85,
-      fontSize: 22,
-      bold: true,
-      color: ORANGE,
-      fontFace: 'Arial',
-    });
-
-    slide3.addText(kpi.change || 'Standard Baseline', {
-      x: xPos + 0.2,
-      y: 3.85,
-      w: cardWidth - 0.4,
-      h: 0.4,
-      fontSize: 10,
-      bold: true,
-      color: kpi.isPositive ? '16A34A' : 'DC2626',
-      fontFace: 'Arial',
-    });
-
-    slide3.addText(
-      'SQL Query:\n' + (kpi.sql ? kpi.sql.slice(0, 48) + '...' : 'SELECT SUM(val) FROM dataset'),
-      {
+      slide3.addText(`METRIC 0${idx + 1}`, {
         x: xPos + 0.2,
-        y: 4.4,
+        y: 1.9,
         w: cardWidth - 0.4,
-        h: 1.8,
-        fontSize: 8,
-        color: GREY,
-        fontFace: 'Courier',
-      }
-    );
-  });
+        h: 0.25,
+        fontSize: 9,
+        bold: true,
+        color: ORANGE,
+        fontFace: 'Arial',
+      });
+
+      slide3.addText(kpi.title, {
+        x: xPos + 0.2,
+        y: 2.2,
+        w: cardWidth - 0.4,
+        h: 0.65,
+        fontSize: 11,
+        bold: true,
+        color: BLACK,
+        fontFace: 'Arial',
+      });
+
+      slide3.addText(String(kpi.computedValue || '--'), {
+        x: xPos + 0.2,
+        y: 2.9,
+        w: cardWidth - 0.4,
+        h: 0.85,
+        fontSize: 22,
+        bold: true,
+        color: ORANGE,
+        fontFace: 'Arial',
+      });
+
+      slide3.addText(kpi.change || 'Standard Baseline', {
+        x: xPos + 0.2,
+        y: 3.85,
+        w: cardWidth - 0.4,
+        h: 0.4,
+        fontSize: 10,
+        bold: true,
+        color: kpi.isPositive ? '16A34A' : 'DC2626',
+        fontFace: 'Arial',
+      });
+
+      slide3.addText(
+        'SQL Query:\n' + (kpi.sql ? kpi.sql.slice(0, 48) + '...' : 'SELECT SUM(val) FROM dataset'),
+        {
+          x: xPos + 0.2,
+          y: 4.4,
+          w: cardWidth - 0.4,
+          h: 1.8,
+          fontSize: 8,
+          color: GREY,
+          fontFace: 'Courier',
+        }
+      );
+    });
+  } else {
+    // Multi-row layout for 5+ KPIs
+    const cols = Math.min(4, Math.ceil(allKpis.length / 2));
+    const cardWidth = (11.6 - (cols - 1) * 0.25) / cols;
+    const cardHeight = allKpis.length > 8 ? 1.5 : 2.3;
+    const gapX = 0.25;
+    const gapY = 0.25;
+    const startX = 0.8;
+    const startY = 1.7;
+
+    allKpis.slice(0, 8).forEach((kpi, idx) => {
+      const col = idx % cols;
+      const row = Math.floor(idx / cols);
+      const xPos = startX + col * (cardWidth + gapX);
+      const yPos = startY + row * (cardHeight + gapY);
+
+      slide3.addShape(pptx.ShapeType.roundRect, {
+        x: xPos,
+        y: yPos,
+        w: cardWidth,
+        h: cardHeight,
+        fill: { color: CARD_BG },
+        line: { color: 'E5E7EB', width: 1 },
+      });
+
+      slide3.addShape(pptx.ShapeType.rect, {
+        x: xPos,
+        y: yPos,
+        w: cardWidth,
+        h: 0.06,
+        fill: { color: ORANGE },
+      });
+
+      slide3.addText(`0${idx + 1} • ${kpi.title}`, {
+        x: xPos + 0.15,
+        y: yPos + 0.15,
+        w: cardWidth - 0.3,
+        h: 0.4,
+        fontSize: 10,
+        bold: true,
+        color: BLACK,
+        fontFace: 'Arial',
+      });
+
+      slide3.addText(String(kpi.computedValue || '--'), {
+        x: xPos + 0.15,
+        y: yPos + 0.6,
+        w: cardWidth - 0.3,
+        h: 0.8,
+        fontSize: 18,
+        bold: true,
+        color: ORANGE,
+        fontFace: 'Arial',
+      });
+
+      slide3.addText(kpi.change || 'Standard Baseline', {
+        x: xPos + 0.15,
+        y: yPos + 1.45,
+        w: cardWidth - 0.3,
+        h: 0.3,
+        fontSize: 9,
+        bold: true,
+        color: kpi.isPositive ? '16A34A' : 'DC2626',
+        fontFace: 'Arial',
+      });
+
+      slide3.addText(
+        kpi.sql ? (kpi.sql.length > 40 ? kpi.sql.slice(0, 38) + '...' : kpi.sql) : '',
+        {
+          x: xPos + 0.15,
+          y: yPos + 1.8,
+          w: cardWidth - 0.3,
+          h: 0.35,
+          fontSize: 7.5,
+          color: GREY,
+          fontFace: 'Courier',
+        }
+      );
+    });
+  }
 
   // ==========================================
   // SLIDE 4: Key Insights & Diagnostic Findings

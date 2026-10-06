@@ -5,6 +5,7 @@ import { executeSqlQuery } from '../utils/sqlEngine';
 import { BarChartComponent } from './charts/BarChartComponent';
 import { saveChatMessageToSupabase } from '../utils/supabaseClient';
 import { synthesizeCalculatedAnswer } from '../utils/answerSynthesizer';
+import { compileNlToSql } from '../utils/nlSqlCompiler';
 
 interface AskAiScreenProps {
   datasetState: DatasetState;
@@ -168,24 +169,25 @@ export const AskAiScreen: React.FC<AskAiScreenProps> = ({ datasetState }) => {
       setMessages(prev => [...prev, agentMsg]);
       saveChatMessageToSupabase(datasetState.filename || 'dataset', agentMsg);
     } catch (err: any) {
-      // Local fallback in case backend or LLM is unreachable
-      const fallbackSql = `SELECT * FROM dataset LIMIT 5`;
-      const execution = executeSqlQuery(fallbackSql, datasetState.rows);
-      const calculated = synthesizeCalculatedAnswer(q, execution.data, fallbackSql);
+      // Local intelligent compiler in case server or external LLM is unreachable
+      const compiled = compileNlToSql(q, datasetState.schema, datasetState.rows);
+      const execution = executeSqlQuery(compiled.sql, datasetState.rows);
+      const calculated = synthesizeCalculatedAnswer(q, execution.data, compiled.sql);
 
       const fallbackMsg: ChatMessage = {
         id: `agent-${Date.now()}`,
         sender: 'agent',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         text: calculated.plainText,
-        sql: fallbackSql,
-        sqlExplanation: 'Selected top representative records from the active dataset.',
-        canAnswer: true,
+        sql: compiled.sql,
+        sqlExplanation: compiled.explanation,
+        canAnswer: compiled.canAnswer,
         queryResults: execution.data,
+        chartType: compiled.suggestedChart,
         calculatedCard: calculated.topEntity
           ? {
               entity: calculated.topEntity,
-              metricLabel: calculated.metricLabel || 'TOP RESULT',
+              metricLabel: calculated.metricLabel || 'CALCULATED RESULT',
               value: calculated.formattedValue || '',
               subtext: calculated.subtext,
             }

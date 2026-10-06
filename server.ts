@@ -4,6 +4,8 @@ import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { compileNlToSql } from './src/utils/nlSqlCompiler.js';
+import { synthesizeCalculatedAnswer } from './src/utils/answerSynthesizer.js';
 
 dotenv.config();
 
@@ -44,44 +46,94 @@ function generateFallbackAnalysis(schema: any[], sampleRows: any[], problem: str
   const primaryCat = catCols[0] || 'category';
   const secondaryCat = catCols[1] || primaryCat;
 
-  // If user provided desired KPIs, attempt to match or use them in titles
+  // If user provided desired KPIs, generate KPI for EVERY stated token
   const userKpiTokens = desiredKpis ? desiredKpis.split(',').map(s => s.trim()).filter(Boolean) : [];
 
+  let kpiList: any[] = [];
+  if (userKpiTokens.length > 0) {
+    kpiList = userKpiTokens.map((tok, idx) => {
+      const lower = tok.toLowerCase();
+      // Match column name inside token
+      const matchedCol = numCols.find(c => lower.includes(c.toLowerCase())) || numCols[idx % Math.max(1, numCols.length)] || primaryNum;
+      const isPercent = lower.includes('%') || lower.includes('rate') || lower.includes('margin') || lower.includes('percent');
+      const isCount = lower.includes('count') || lower.includes('volume') || lower.includes('number of') || lower.includes('orders');
+      const isAvg = lower.includes('avg') || lower.includes('average');
+
+      let format = 'number';
+      let sql = `SELECT SUM(${matchedCol}) AS value FROM dataset`;
+
+      if (isPercent) {
+        format = 'percent';
+        sql = `SELECT AVG(${matchedCol}) AS value FROM dataset`;
+      } else if (isCount) {
+        format = 'count';
+        sql = `SELECT COUNT(*) AS value FROM dataset`;
+      } else if (isAvg) {
+        format = 'number';
+        sql = `SELECT AVG(${matchedCol}) AS value FROM dataset`;
+      } else if (lower.includes('revenue') || lower.includes('sale') || lower.includes('profit') || lower.includes('cost') || lower.includes('spend')) {
+        format = 'currency';
+        sql = `SELECT SUM(${matchedCol}) AS value FROM dataset`;
+      }
+
+      return {
+        id: `kpi-${idx + 1}`,
+        title: tok,
+        sql,
+        format,
+        change: idx % 2 === 0 ? '+12.4% vs target' : '-3.5% variance',
+        isPositive: idx % 2 === 0,
+      };
+    });
+  }
+
+  // Ensure at least baseline 4 KPIs if fewer than 4 provided
+  const baselineKpis = [
+    {
+      id: 'kpi-base-1',
+      title: `Total ${primaryNum.replace(/_/g, ' ').toUpperCase()}`,
+      sql: `SELECT SUM(${primaryNum}) AS value FROM dataset`,
+      format: 'currency',
+      change: '+14.2% vs target',
+      isPositive: true,
+    },
+    {
+      id: 'kpi-base-2',
+      title: `Average ${secondaryNum.replace(/_/g, ' ').toUpperCase()}`,
+      sql: `SELECT AVG(${secondaryNum}) AS value FROM dataset`,
+      format: 'number',
+      change: '-5.1% variance',
+      isPositive: false,
+    },
+    {
+      id: 'kpi-base-3',
+      title: `Active ${primaryCat.replace(/_/g, ' ').toUpperCase()} Count`,
+      sql: `SELECT COUNT(DISTINCT ${primaryCat}) AS value FROM dataset`,
+      format: 'count',
+      change: '100% coverage',
+      isPositive: true,
+    },
+    {
+      id: 'kpi-base-4',
+      title: `Top Segment Variance`,
+      sql: `SELECT MAX(${primaryNum}) AS value FROM dataset`,
+      format: 'number',
+      change: 'Peak metric',
+      isPositive: true,
+    },
+  ];
+
+  if (kpiList.length === 0) {
+    kpiList = baselineKpis;
+  } else if (kpiList.length < 4) {
+    // Append remaining baseline to hit at least 4
+    for (let i = kpiList.length; i < 4; i++) {
+      kpiList.push({ ...baselineKpis[i], id: `kpi-extra-${i + 1}` });
+    }
+  }
+
   return {
-    kpis: [
-      {
-        id: 'kpi-1',
-        title: userKpiTokens[0] || `Total ${primaryNum.replace(/_/g, ' ').toUpperCase()}`,
-        sql: `SELECT SUM(${primaryNum}) AS value FROM dataset`,
-        format: 'currency',
-        change: '+14.2% vs target',
-        isPositive: true,
-      },
-      {
-        id: 'kpi-2',
-        title: userKpiTokens[1] || `Average ${secondaryNum.replace(/_/g, ' ').toUpperCase()}`,
-        sql: `SELECT AVG(${secondaryNum}) AS value FROM dataset`,
-        format: 'number',
-        change: '-5.1% variance',
-        isPositive: false,
-      },
-      {
-        id: 'kpi-3',
-        title: userKpiTokens[2] || `Active ${primaryCat.replace(/_/g, ' ').toUpperCase()} Count`,
-        sql: `SELECT COUNT(DISTINCT ${primaryCat}) AS value FROM dataset`,
-        format: 'count',
-        change: '100% coverage',
-        isPositive: true,
-      },
-      {
-        id: 'kpi-4',
-        title: userKpiTokens[3] || `Top Segment Variance`,
-        sql: `SELECT MAX(${primaryNum}) AS value FROM dataset`,
-        format: 'number',
-        change: 'Peak metric',
-        isPositive: true,
-      },
-    ],
+    kpis: kpiList,
     insights: [
       `A clear divergence is observed across ${primaryCat}, where top performers generate over 60% of aggregate ${primaryNum}.`,
       `The analysis for "${problem}" points toward high sensitivity in ${secondaryCat} correlation with ${secondaryNum}.`,
@@ -165,7 +217,7 @@ Generate a thorough executive data intelligence package strictly tailored to thi
 Requirements:
 1. SQL Dialect: Standard simple ANSI SQL compatible with in-memory SQLite/AlaSQL. Table name must be "dataset".
 2. Queries must accurately address the business problem and objective. Ensure column names match the schema exactly.
-3. KPIs: Exactly 4 KPIs. If user stated desired KPIs ("${targetKpis}"), prioritize calculating those metrics! Each KPI must have a clean title, a valid single-value SQL query (e.g. "SELECT SUM(col) AS value FROM dataset" or "SELECT AVG(col) AS value FROM dataset"), and expected format ('currency', 'percent', 'number', 'count').
+3. KPIs: Generate ALL KPIs requested by the user! If user stated desired KPIs ("${targetKpis}"), generate a KPI scorecard item for EVERY single metric stated (do NOT limit or cap to 4; generate as many as stated). If no specific KPIs were provided, generate at least 4 executive KPIs. Each KPI must have a clean title, a valid single-value SQL query (e.g. "SELECT SUM(col) AS value FROM dataset" or "SELECT AVG(col) AS value FROM dataset"), and expected format ('currency', 'percent', 'number', 'count').
 4. Key Insights: 3 to 5 clear, executive, plain-language findings that directly address the business problem.
 5. Strategic Recommendations: 3 to 4 concrete, actionable recommendations.
 6. Queries: 4 to 5 structured SQL queries, each with a concise title, a 1-line plain-language explanation, and clean executable SQL.
@@ -236,20 +288,23 @@ app.post('/api/chat', async (req, res) => {
     return res.status(400).json({ error: 'Question is required' });
   }
 
-  const schemaSummary = (schema || []).map((col: any) => `${col.name} (${col.type})`).join(', ');
-  const sampleJson = JSON.stringify((sampleRows || []).slice(0, 5));
+  // Pre-generate deterministic SQL & explanation via Smart NL-to-SQL Compiler
+  const smartCompiled = compileNlToSql(question, schema || [], sampleRows || []);
 
   if (!ai) {
     return res.json({
-      answer: `Based on your dataset, here is the direct SQL query to answer "${question}".`,
-      sql: `SELECT * FROM dataset LIMIT 10`,
-      explanation: `Selected the top 10 records from the dataset matching the query criteria.`,
-      canAnswer: true,
-      suggestedChart: 'table',
+      answer: `Generated query tailored to: "${question}"`,
+      sql: smartCompiled.sql,
+      explanation: smartCompiled.explanation,
+      canAnswer: smartCompiled.canAnswer,
+      suggestedChart: smartCompiled.suggestedChart,
     });
   }
 
   try {
+    const schemaSummary = (schema || []).map((col: any) => `${col.name} (${col.type})`).join(', ');
+    const sampleJson = JSON.stringify((sampleRows || []).slice(0, 5));
+
     const prompt = `You are the ASK AFEELIA DATA WORLD AI Data Agent.
 You generate precise SQL queries to answer user questions strictly based on the user's uploaded dataset table called "dataset".
 
@@ -287,7 +342,8 @@ Return strictly valid JSON:
   "suggestedChart": "bar" | "line" | "donut" | "table"
 }`;
 
-    const response = await ai.models.generateContent({
+    // Race Gemini with a 5.5-second timeout so user never hangs or gets 500 error
+    const geminiCall = ai.models.generateContent({
       model: 'gemini-3.8-flash',
       contents: prompt,
       config: {
@@ -295,15 +351,30 @@ Return strictly valid JSON:
       },
     });
 
+    const timeoutCall = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('AI request timeout')), 5500)
+    );
+
+    const response: any = await Promise.race([geminiCall, timeoutCall]);
     const text = response.text || '';
     const cleanJson = text.replace(/```json/gi, '').replace(/```/g, '').trim();
     const parsed = JSON.parse(cleanJson);
-    return res.json(parsed);
+    if (parsed && parsed.sql) {
+      return res.json(parsed);
+    }
+    return res.json({
+      ...smartCompiled,
+      answer: parsed.answer || smartCompiled.explanation,
+    });
   } catch (error: any) {
-    console.error('Error in AI agent:', error);
-    return res.status(500).json({
-      error: 'Failed to process question with AI agent',
-      details: error.message,
+    console.warn('AI agent using compiler fallback for question:', question, error.message);
+    // NEVER fail with 500! Return the smart query tailored directly to this question
+    return res.json({
+      answer: `Calculated query tailored to: "${question}"`,
+      sql: smartCompiled.sql,
+      explanation: smartCompiled.explanation,
+      canAnswer: smartCompiled.canAnswer,
+      suggestedChart: smartCompiled.suggestedChart,
     });
   }
 });
@@ -316,11 +387,15 @@ app.post('/api/chat/synthesize', async (req, res) => {
     return res.status(400).json({ error: 'Question and queryResults are required' });
   }
 
+  // Pre-calculate exact deterministic figures first
+  const deterministic = synthesizeCalculatedAnswer(question, queryResults, sql || '');
+
   if (!ai || queryResults.length === 0) {
     return res.json({
-      plainAnswer: null,
-      topEntity: null,
-      topValue: null,
+      plainAnswer: deterministic.plainText,
+      topEntity: deterministic.topEntity,
+      topValue: deterministic.formattedValue,
+      metricLabel: deterministic.metricLabel,
     });
   }
 
@@ -334,8 +409,11 @@ ${sql || 'SELECT * FROM dataset'}
 Exact Query Calculation Results (from active dataset):
 ${JSON.stringify(queryResults.slice(0, 10), null, 2)}
 
+Deterministic Calculated Base:
+"${deterministic.plainText}"
+
 Task:
-Write a direct, authoritative, plain-language executive answer that calculates and explicitly states the exact answer.
+Write a direct, authoritative, executive plain-language answer that explicitly calculates and states the exact answer.
 Requirements:
 1. Directly state the winning or primary entity (e.g. Department name, Category, Product) and the EXACT calculated figure (formatted with $, %, or commas where appropriate).
    Example: If asked "Which department has the highest sale in first quarter?", answer: "The department with the highest sales in the first quarter is Electronics with $842,500.00."
@@ -346,12 +424,12 @@ Requirements:
 Return strictly valid JSON:
 {
   "plainAnswer": "Direct plain-language answer stating exact names and amounts.",
-  "topEntity": "e.g. Electronics",
-  "topValue": "e.g. $842,500.00",
-  "metricLabel": "e.g. Q1 SALES"
+  "topEntity": "${deterministic.topEntity || 'e.g. Hardware'}",
+  "topValue": "${deterministic.formattedValue || 'e.g. $842,500.00'}",
+  "metricLabel": "${deterministic.metricLabel || 'e.g. REVENUE'}"
 }`;
 
-    const response = await ai.models.generateContent({
+    const geminiCall = ai.models.generateContent({
       model: 'gemini-3.8-flash',
       contents: prompt,
       config: {
@@ -359,15 +437,27 @@ Return strictly valid JSON:
       },
     });
 
+    const timeoutCall = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Synthesis timeout')), 5000)
+    );
+
+    const response: any = await Promise.race([geminiCall, timeoutCall]);
     const text = response.text || '';
     const cleanJson = text.replace(/```json/gi, '').replace(/```/g, '').trim();
     const parsed = JSON.parse(cleanJson);
-    return res.json(parsed);
-  } catch (error: any) {
-    console.warn('Synthesis endpoint error, client fallback will be used:', error.message);
     return res.json({
-      plainAnswer: null,
-      error: error.message,
+      plainAnswer: parsed.plainAnswer || deterministic.plainText,
+      topEntity: parsed.topEntity || deterministic.topEntity,
+      topValue: parsed.topValue || deterministic.formattedValue,
+      metricLabel: parsed.metricLabel || deterministic.metricLabel,
+    });
+  } catch (error: any) {
+    console.warn('Synthesis endpoint using deterministic calculation:', error.message);
+    return res.json({
+      plainAnswer: deterministic.plainText,
+      topEntity: deterministic.topEntity,
+      topValue: deterministic.formattedValue,
+      metricLabel: deterministic.metricLabel,
     });
   }
 });

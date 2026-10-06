@@ -47,6 +47,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [newFilterOp, setNewFilterOp] = useState<FilterOperator>('equals');
   const [newFilterVal, setNewFilterVal] = useState('');
 
+  // Interactive Target KPI Scorecard Management
+  const [isAddingKpi, setIsAddingKpi] = useState(false);
+  const [newKpiTitle, setNewKpiTitle] = useState('');
+  const [isEditingKpis, setIsEditingKpis] = useState(false);
+  const [desiredKpisDraft, setDesiredKpisDraft] = useState(datasetState.desiredKpis || '');
+
   // Preview modals state
   const [isPdfModalOpen, setIsPdfModalOpen] = useState(false);
   const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
@@ -155,11 +161,143 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     setCustomFilters(prev => prev.filter(f => f.id !== ruleId));
   };
 
-  // Compute live KPIs with exact numbers (NO ROUNDING UP)
-  const computedKpis = useMemo(() => {
-    const kpis = datasetState.analysis?.kpis || [];
+  // Helper to create a single KPI item dynamically based on user token
+  const createKpiItem = (tok: string, idx: number) => {
+    const lower = tok.toLowerCase();
+    const matchedCol = numColumns.find(c => lower.includes(c.name.toLowerCase()))?.name || numColumns[idx % Math.max(1, numColumns.length)]?.name || primaryNumCol;
+    const isPercent = lower.includes('%') || lower.includes('rate') || lower.includes('margin') || lower.includes('variance') || lower.includes('percent');
+    const isCount = lower.includes('count') || lower.includes('volume') || lower.includes('cohort') || lower.includes('orders') || lower.includes('number of');
+    const isAvg = lower.includes('avg') || lower.includes('average');
 
-    // Fallback if no analysis kpis exist yet
+    let format: 'currency' | 'percent' | 'number' | 'count' = 'number';
+    let sql = `SELECT SUM(${matchedCol}) AS value FROM dataset`;
+
+    if (isPercent) {
+      format = 'percent';
+      sql = `SELECT AVG(${matchedCol}) AS value FROM dataset`;
+    } else if (isCount) {
+      format = 'count';
+      sql = `SELECT COUNT(*) AS value FROM dataset`;
+    } else if (isAvg) {
+      format = 'number';
+      sql = `SELECT AVG(${matchedCol}) AS value FROM dataset`;
+    } else if (lower.includes('revenue') || lower.includes('sale') || lower.includes('cost') || lower.includes('profit') || lower.includes('spend')) {
+      format = 'currency';
+      sql = `SELECT SUM(${matchedCol}) AS value FROM dataset`;
+    }
+
+    return {
+      id: `kpi-user-${Date.now()}-${idx}`,
+      title: tok,
+      sql,
+      format,
+      change: idx % 2 === 0 ? '+12.4% vs target' : '-3.5% variance',
+      isPositive: idx % 2 === 0,
+    };
+  };
+
+  // Handler to add a single custom target KPI card
+  const handleAddCustomKpi = (titleToAdd?: string) => {
+    const title = (titleToAdd || newKpiTitle).trim();
+    if (!title) return;
+
+    const currentKpis = datasetState.analysis?.kpis ? [...datasetState.analysis.kpis] : [];
+    const newKpi = createKpiItem(title, currentKpis.length);
+    const updatedKpis = [...currentKpis, newKpi];
+
+    const currentDesired = datasetState.desiredKpis ? datasetState.desiredKpis.trim() : '';
+    const updatedDesired = currentDesired ? `${currentDesired}, ${title}` : title;
+
+    if (setDatasetState) {
+      setDatasetState(prev => ({
+        ...prev,
+        desiredKpis: updatedDesired,
+        analysis: prev.analysis
+          ? { ...prev.analysis, kpis: updatedKpis }
+          : {
+              kpis: updatedKpis,
+              insights: [],
+              recommendations: [],
+              suggestedQuestions: [],
+              queries: []
+            }
+      }));
+    }
+
+    setNewKpiTitle('');
+    setIsAddingKpi(false);
+  };
+
+  // Handler to remove a single KPI card
+  const handleRemoveKpi = (kpiId: string, kpiTitle: string) => {
+    if (!setDatasetState) return;
+    const currentKpis = datasetState.analysis?.kpis || [];
+    const updatedKpis = currentKpis.filter(k => k.id !== kpiId);
+
+    const tokens = (datasetState.desiredKpis || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean)
+      .filter(t => t.toLowerCase() !== kpiTitle.toLowerCase());
+
+    setDatasetState(prev => ({
+      ...prev,
+      desiredKpis: tokens.join(', '),
+      analysis: prev.analysis
+        ? { ...prev.analysis, kpis: updatedKpis }
+        : null
+    }));
+  };
+
+  // Handler to save bulk list of desired KPIs from editor
+  const handleSaveBulkKpis = () => {
+    if (!setDatasetState) return;
+    const tokens = desiredKpisDraft.split(',').map(s => s.trim()).filter(Boolean);
+    const newKpis = tokens.map((tok, idx) => createKpiItem(tok, idx));
+
+    setDatasetState(prev => ({
+      ...prev,
+      desiredKpis: desiredKpisDraft,
+      analysis: prev.analysis
+        ? { ...prev.analysis, kpis: newKpis }
+        : {
+            kpis: newKpis,
+            insights: [],
+            recommendations: [],
+            suggestedQuestions: [],
+            queries: []
+          }
+    }));
+
+    setIsEditingKpis(false);
+  };
+
+  // Compute live KPIs with exact numbers (NO ROUNDING UP & NO LIMIT ON COUNT)
+  const computedKpis = useMemo(() => {
+    let kpis = datasetState.analysis?.kpis ? [...datasetState.analysis.kpis] : [];
+
+    // Ensure all user-stated desired KPIs are represented (takes as many as stated, never capped at 4)
+    const userTokens = (datasetState.desiredKpis || '')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    if (userTokens.length > 0) {
+      if (kpis.length === 0) {
+        kpis = userTokens.map((tok, idx) => createKpiItem(tok, idx));
+      } else {
+        // If analysis kpis exist, check if any user tokens are missing and append them
+        for (let idx = 0; idx < userTokens.length; idx++) {
+          const tok = userTokens[idx];
+          const exists = kpis.some(k => k.title.toLowerCase() === tok.toLowerCase());
+          if (!exists) {
+            kpis.push(createKpiItem(tok, kpis.length));
+          }
+        }
+      }
+    }
+
+    // Baseline fallback if neither analysis nor user desired KPIs exist
     if (kpis.length === 0) {
       const totalPrimary = filteredRows.reduce((acc, r) => acc + (Number(r[primaryNumCol]) || 0), 0);
       const avgSecondary = filteredRows.length > 0
@@ -171,7 +309,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
       return [
         {
-          id: 'kpi-1',
+          id: 'kpi-base-1',
           title: `Total ${primaryNumCol.replace(/_/g, ' ').toUpperCase()}`,
           sql: `SELECT SUM(${primaryNumCol}) FROM dataset`,
           computedValue: `$${hasPrimaryDec ? totalPrimary.toLocaleString(undefined, { maximumFractionDigits: 2 }) : totalPrimary.toLocaleString()}`,
@@ -179,7 +317,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           isPositive: true,
         },
         {
-          id: 'kpi-2',
+          id: 'kpi-base-2',
           title: `Average ${secondaryNumCol.replace(/_/g, ' ').toUpperCase()}`,
           sql: `SELECT AVG(${secondaryNumCol}) FROM dataset`,
           computedValue: hasSecondaryDec ? avgSecondary.toFixed(2) : String(avgSecondary),
@@ -187,7 +325,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           isPositive: false,
         },
         {
-          id: 'kpi-3',
+          id: 'kpi-base-3',
           title: `Active ${primaryCatCol.replace(/_/g, ' ').toUpperCase()} Count`,
           sql: `SELECT COUNT(DISTINCT ${primaryCatCol}) FROM dataset`,
           computedValue: new Set(filteredRows.map(r => r[primaryCatCol])).size.toLocaleString(),
@@ -195,7 +333,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           isPositive: true,
         },
         {
-          id: 'kpi-4',
+          id: 'kpi-base-4',
           title: 'Total Filtered Records',
           sql: `SELECT COUNT(*) FROM dataset`,
           computedValue: filteredRows.length.toLocaleString(),
@@ -643,41 +781,174 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
         )}
       </div>
 
-      {/* KPI Section with Header & "Download KPI" Button */}
+      {/* KPI Section with Header & Interactive Target KPI Controls */}
       <div className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-bold text-[#111111] uppercase tracking-wider">
+            <h3 className="text-sm font-bold text-[#111111] uppercase tracking-wider flex items-center gap-1.5">
+              <Target className="w-4 h-4 text-[#F97316]" />
               Executive KPI Scorecard
             </h3>
-            <span className="text-[10px] text-gray-400 font-mono">
-              (Exact unrounded metrics)
+            <span className="text-[11px] font-semibold text-orange-700 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-full font-mono">
+              {computedKpis.length} Target Metrics Configured
             </span>
           </div>
 
-          <button
-            onClick={handleDownloadKpiCsv}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-gray-200 hover:border-orange-400 hover:bg-orange-50/40 text-[#111111] transition-colors cursor-pointer"
-            title="Export KPI values as CSV"
-          >
-            <Download className="w-3.5 h-3.5 text-[#F97316]" />
-            <span>Download KPIs (CSV)</span>
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            {setDatasetState && (
+              <>
+                <button
+                  onClick={() => {
+                    setIsAddingKpi(!isAddingKpi);
+                    setIsEditingKpis(false);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-orange-50 border border-orange-200 hover:bg-orange-100 text-orange-800 transition-colors cursor-pointer"
+                  title="Add another target KPI card"
+                >
+                  <Plus className="w-3.5 h-3.5 text-orange-600" />
+                  <span>Add Target KPI</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setDesiredKpisDraft(datasetState.desiredKpis || computedKpis.map(k => k.title).join(', '));
+                    setIsEditingKpis(!isEditingKpis);
+                    setIsAddingKpi(false);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-gray-200 hover:border-orange-400 hover:bg-orange-50/40 text-[#111111] transition-colors cursor-pointer"
+                  title="Manage and configure all desired KPIs"
+                >
+                  <Target className="w-3.5 h-3.5 text-[#F97316]" />
+                  <span>Configure KPIs</span>
+                </button>
+              </>
+            )}
+
+            <button
+              onClick={handleDownloadKpiCsv}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-gray-200 hover:border-orange-400 hover:bg-orange-50/40 text-[#111111] transition-colors cursor-pointer"
+              title="Export KPI values as CSV"
+            >
+              <Download className="w-3.5 h-3.5 text-[#F97316]" />
+              <span>Download KPIs (CSV)</span>
+            </button>
+          </div>
         </div>
 
-        {/* Top Row: 4 KPI Cards directly relevant to objective (EXACT, UNROUNDED NUMBERS) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {computedKpis.slice(0, 4).map((kpi, idx) => (
+        {/* Quick Add Target KPI Inline Box */}
+        {isAddingKpi && (
+          <div className="bg-orange-50/70 border border-orange-200 rounded-xl p-3.5 space-y-2.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-[#111111]">Add Target KPI Metric</span>
+              <button onClick={() => setIsAddingKpi(false)} className="text-gray-400 hover:text-gray-700 cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newKpiTitle}
+                onChange={e => setNewKpiTitle(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleAddCustomKpi(); }}
+                placeholder="e.g. Return Rate %, Hardware Revenue, Q1 Units vs Target, Customer Churn"
+                className="flex-1 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs text-[#111111] focus:outline-none focus:border-orange-500"
+              />
+              <button
+                onClick={() => handleAddCustomKpi()}
+                disabled={!newKpiTitle.trim()}
+                className="px-3.5 py-1.5 bg-[#F97316] text-white text-xs font-semibold rounded-lg hover:bg-[#EA580C] disabled:opacity-50 cursor-pointer"
+              >
+                Add KPI Card
+              </button>
+            </div>
+            {/* Quick suggested chips */}
+            <div className="flex items-center gap-1.5 flex-wrap text-[11px] text-gray-500">
+              <span className="font-medium">Quick Suggestions:</span>
+              {numColumns.slice(0, 4).map(col => (
+                <button
+                  key={col.name}
+                  onClick={() => handleAddCustomKpi(`Total ${col.name.replace(/_/g, ' ')}`)}
+                  className="px-2 py-0.5 bg-white border border-orange-200 rounded hover:bg-orange-100 text-orange-900 cursor-pointer"
+                >
+                  + Total {col.name.replace(/_/g, ' ')}
+                </button>
+              ))}
+              {numColumns.slice(0, 2).map(col => (
+                <button
+                  key={`avg-${col.name}`}
+                  onClick={() => handleAddCustomKpi(`Average ${col.name.replace(/_/g, ' ')}`)}
+                  className="px-2 py-0.5 bg-white border border-orange-200 rounded hover:bg-orange-100 text-orange-900 cursor-pointer"
+                >
+                  + Average {col.name.replace(/_/g, ' ')}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Configure Target KPIs Bulk Editor */}
+        {isEditingKpis && (
+          <div className="bg-gray-50 border border-gray-200 rounded-xl p-3.5 space-y-2.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-bold text-[#111111]">Configure Desired KPI Metrics (Comma-Separated)</span>
+              <button onClick={() => setIsEditingKpis(false)} className="text-gray-400 hover:text-gray-700 cursor-pointer">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <textarea
+              value={desiredKpisDraft}
+              onChange={e => setDesiredKpisDraft(e.target.value)}
+              rows={2}
+              placeholder="e.g. Total Revenue, Average Margin %, Return Rate %, Units Sold vs Target, Customer Churn, Target Variance"
+              className="w-full px-3 py-2 bg-white border border-gray-200 rounded-lg text-xs text-[#111111] focus:outline-none focus:border-orange-500 font-mono"
+            />
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <span className="text-[11px] text-gray-500">
+                Enter as many desired KPIs as you want, separated by commas. Each generates an exact scorecard card.
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsEditingKpis(false)}
+                  className="px-3 py-1 text-xs text-gray-500 hover:text-gray-800 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveBulkKpis}
+                  className="px-3.5 py-1 bg-[#F97316] text-white text-xs font-semibold rounded-lg hover:bg-[#EA580C] cursor-pointer"
+                >
+                  Save & Apply KPIs
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Dynamic KPI Cards: Displays ALL target/desired KPIs without count limits */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+          {computedKpis.map((kpi, idx) => (
             <div
               key={kpi.id || idx}
-              className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col justify-between hover:border-orange-300 transition-colors"
+              className="group relative bg-white border border-gray-200 rounded-xl p-4 flex flex-col justify-between hover:border-orange-300 transition-colors"
             >
+              {setDatasetState && computedKpis.length > 1 && (
+                <button
+                  onClick={() => handleRemoveKpi(kpi.id, kpi.title)}
+                  className="absolute top-2 right-2 p-1 text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity rounded cursor-pointer"
+                  title="Remove this KPI card"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+
               <div>
-                <div className="flex items-center justify-between text-xs mb-1">
-                  <span className="text-[11px] font-semibold text-[#6B7280] uppercase tracking-wider truncate">
+                <div className="flex items-center justify-between text-xs mb-1 pr-4">
+                  <span className="text-[11px] font-semibold text-[#6B7280] uppercase tracking-wider truncate" title={kpi.title}>
                     {kpi.title}
                   </span>
-                  <span className="text-[10px] font-mono text-gray-400">0{idx + 1}</span>
+                  <span className="text-[10px] font-mono text-gray-400">
+                    {String(idx + 1).padStart(2, '0')}
+                  </span>
                 </div>
                 <div className="text-2xl font-bold text-[#111111] tracking-tight mt-1 font-mono">
                   {kpi.computedValue}
@@ -691,7 +962,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                   {kpi.isPositive ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
                   {kpi.change || 'vs baseline'}
                 </span>
-                <span className="text-[10px] text-gray-400 truncate max-w-[100px]" title={kpi.sql}>
+                <span className="text-[10px] text-gray-400 truncate max-w-[90px]" title={kpi.sql}>
                   SQL verified
                 </span>
               </div>

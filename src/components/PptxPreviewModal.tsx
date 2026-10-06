@@ -24,7 +24,7 @@ export const PptxPreviewModal: React.FC<PptxPreviewModalProps> = ({
   if (!isOpen) return null;
 
   const totalSlides = 7;
-  const kpis = (analysis.kpis || []).slice(0, 4);
+  const kpis = analysis.kpis || [];
   const insights = (analysis.insights || []).slice(0, 4);
   const recommendations = (analysis.recommendations || []).slice(0, 3);
   const firstQuery = (analysis.queries && analysis.queries[0]) || null;
@@ -196,20 +196,20 @@ export const PptxPreviewModal: React.FC<PptxPreviewModalProps> = ({
                       Performance Scorecard
                     </span>
                     <h3 className="text-xl font-bold text-[#111111]">
-                      Executive KPI Scorecard (Exact Figures)
+                      Executive KPI Scorecard ({kpis.length} Stated Metrics)
                     </h3>
                   </div>
 
-                  <div className="grid grid-cols-4 gap-3 my-auto">
+                  <div className={`grid ${kpis.length <= 4 ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4'} gap-2.5 my-auto max-h-[340px] overflow-y-auto`}>
                     {kpis.map((k, i) => (
-                      <div key={i} className="p-4 bg-gray-50 rounded-xl border border-gray-200 flex flex-col justify-between space-y-3">
-                        <span className="text-[10px] font-bold text-[#F97316] uppercase truncate">
+                      <div key={i} className="p-3 bg-gray-50 rounded-xl border border-gray-200 flex flex-col justify-between space-y-2">
+                        <span className="text-[10px] font-bold text-[#F97316] uppercase truncate" title={k.title}>
                           {k.title}
                         </span>
-                        <div className="text-xl sm:text-2xl font-bold text-[#111111] font-mono">
+                        <div className="text-lg sm:text-xl font-bold text-[#111111] font-mono">
                           {k.computedValue}
                         </div>
-                        <span className="text-xs font-semibold text-emerald-600 truncate">
+                        <span className="text-[11px] font-semibold text-emerald-600 truncate">
                           {k.change || 'Baseline Metric'}
                         </span>
                       </div>
