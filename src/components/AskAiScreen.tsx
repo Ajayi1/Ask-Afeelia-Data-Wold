@@ -1,12 +1,27 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, ChevronDown, ChevronUp, Database, Sparkles, AlertCircle } from 'lucide-react';
+import { Send, Bot, User, ChevronDown, ChevronUp, Database, Sparkles, AlertCircle, Calculator } from 'lucide-react';
 import { DatasetState, ChatMessage } from '../types/data';
 import { executeSqlQuery } from '../utils/sqlEngine';
 import { BarChartComponent } from './charts/BarChartComponent';
 import { saveChatMessageToSupabase } from '../utils/supabaseClient';
+import { synthesizeCalculatedAnswer } from '../utils/answerSynthesizer';
 
 interface AskAiScreenProps {
   datasetState: DatasetState;
+}
+
+function renderFormattedMarkdown(text: string) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return (
+        <strong key={index} className="font-bold text-[#111111]">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    return part;
+  });
 }
 
 export const AskAiScreen: React.FC<AskAiScreenProps> = ({ datasetState }) => {
@@ -93,16 +108,61 @@ export const AskAiScreen: React.FC<AskAiScreenProps> = ({ datasetState }) => {
         }
       }
 
+      // Step 2: Calculate exact figures and formulate initial plain-language answer
+      const calculated = synthesizeCalculatedAnswer(q, queryResults, agentData.sql || '');
+      let finalText = calculated.plainText;
+      let finalCard = calculated.topEntity
+        ? {
+            entity: calculated.topEntity,
+            metricLabel: calculated.metricLabel || 'CALCULATED RESULT',
+            value: calculated.formattedValue || '',
+            subtext: calculated.subtext,
+          }
+        : undefined;
+
+      // Step 3: Enhance plain-language phrasing using LLM synthesis if queryResults exist
+      if (queryResults.length > 0 && agentData.canAnswer !== false) {
+        try {
+          const synthResponse = await fetch('/api/chat/synthesize', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              question: q,
+              queryResults: queryResults.slice(0, 10),
+              sql: agentData.sql,
+              sqlExplanation: agentData.explanation,
+            }),
+          });
+          if (synthResponse.ok) {
+            const synthData = await synthResponse.json();
+            if (synthData.plainAnswer) {
+              finalText = synthData.plainAnswer;
+              if (synthData.topEntity) {
+                finalCard = {
+                  entity: synthData.topEntity,
+                  metricLabel: synthData.metricLabel || calculated.metricLabel || 'TOP RESULT',
+                  value: synthData.topValue || calculated.formattedValue || '',
+                  subtext: calculated.subtext,
+                };
+              }
+            }
+          }
+        } catch (e) {
+          // Use deterministic calculation answer
+        }
+      }
+
       const agentMsg: ChatMessage = {
         id: `agent-${Date.now()}`,
         sender: 'agent',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        text: agentData.answer || 'Analysis complete.',
+        text: finalText,
         sql: agentData.sql,
         sqlExplanation: agentData.explanation,
         canAnswer: agentData.canAnswer !== false,
         queryResults,
         chartType: agentData.suggestedChart,
+        calculatedCard: finalCard,
       };
 
       setMessages(prev => [...prev, agentMsg]);
@@ -111,16 +171,25 @@ export const AskAiScreen: React.FC<AskAiScreenProps> = ({ datasetState }) => {
       // Local fallback in case backend or LLM is unreachable
       const fallbackSql = `SELECT * FROM dataset LIMIT 5`;
       const execution = executeSqlQuery(fallbackSql, datasetState.rows);
+      const calculated = synthesizeCalculatedAnswer(q, execution.data, fallbackSql);
 
       const fallbackMsg: ChatMessage = {
         id: `agent-${Date.now()}`,
         sender: 'agent',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        text: `I executed a direct diagnostic query on your dataset for "${q}". Here are the matching rows:`,
+        text: calculated.plainText,
         sql: fallbackSql,
         sqlExplanation: 'Selected top representative records from the active dataset.',
         canAnswer: true,
         queryResults: execution.data,
+        calculatedCard: calculated.topEntity
+          ? {
+              entity: calculated.topEntity,
+              metricLabel: calculated.metricLabel || 'TOP RESULT',
+              value: calculated.formattedValue || '',
+              subtext: calculated.subtext,
+            }
+          : undefined,
       };
 
       setMessages(prev => [...prev, fallbackMsg]);
@@ -223,9 +292,34 @@ export const AskAiScreen: React.FC<AskAiScreenProps> = ({ datasetState }) => {
                   <span>{msg.timestamp}</span>
                 </div>
 
+                {/* Executive Calculated Answer Card */}
+                {isAgent && msg.calculatedCard && (
+                  <div className="bg-orange-50/80 border border-orange-200 rounded-xl p-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-[#F97316] text-white flex items-center justify-center font-bold text-xs flex-shrink-0 shadow-none">
+                        <Calculator className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-[#F97316] tracking-wider block">
+                          {msg.calculatedCard.metricLabel || 'Calculated Result'}
+                        </span>
+                        <span className="text-xs sm:text-sm font-bold text-[#111111]">
+                          {msg.calculatedCard.entity ? `${msg.calculatedCard.entity}: ` : ''}
+                          {msg.calculatedCard.value}
+                        </span>
+                      </div>
+                    </div>
+                    {msg.calculatedCard.subtext && (
+                      <span className="text-[10px] text-[#6B7280] font-medium bg-white px-2 py-0.5 rounded-md border border-gray-200 hidden sm:inline">
+                        {msg.calculatedCard.subtext}
+                      </span>
+                    )}
+                  </div>
+                )}
+
                 {/* Plain-Language Text Answer */}
                 <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                  {msg.text}
+                  {isAgent ? renderFormattedMarkdown(msg.text) : msg.text}
                 </p>
 
                 {/* If Agent says data cannot answer */}

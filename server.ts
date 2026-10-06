@@ -251,7 +251,7 @@ app.post('/api/chat', async (req, res) => {
 
   try {
     const prompt = `You are the ASK AFEELIA DATA WORLD AI Data Agent.
-You answer user questions strictly based on the user's uploaded dataset table called "dataset".
+You generate precise SQL queries to answer user questions strictly based on the user's uploaded dataset table called "dataset".
 
 Dataset Columns:
 ${schemaSummary}
@@ -268,19 +268,22 @@ User Question: "${question}"
 Conversation History:
 ${JSON.stringify(history || [])}
 
-Rules:
-1. Always write an ANSI SQL query on "dataset" to retrieve the exact data that answers the question.
-2. If the user question CANNOT be answered by the available columns in the dataset, set "canAnswer" to false, provide a polite explanation that the dataset does not contain that information, and leave "sql" empty or provide the closest relevant query.
-3. If it CAN be answered, formulate the best SQL query (use standard aggregates, GROUP BY, ORDER BY, LIMIT, CASE, ROUND). Table name must be "dataset".
-4. Provide a clear, executive, plain-language answer summarizing what the query calculates and how to interpret the results.
-5. Suggest the best visualization type for this answer: 'bar', 'line', 'donut', or 'table'.
+Rules for SQL Generation:
+1. Always write an ANSI SQL query on "dataset" to retrieve the exact calculated data that answers the question.
+2. If the user asks for rankings, superlatives, comparisons, or breakdowns (e.g. "which department has the highest sales in Q1", "top product", "lowest cost", "average revenue by region"):
+   - Explicitly SELECT the entity/category column(s) (e.g. department, product, region) AND the aggregated metric column (e.g. SUM(sales) AS total_sales, AVG(profit) AS avg_profit).
+   - Use GROUP BY on the entity column(s).
+   - Filter via WHERE for any specific time period or conditions (e.g. WHERE quarter = 'Q1' or date LIKE '2024-Q1%').
+   - Use ORDER BY <metric> DESC (or ASC for lowest) and LIMIT 5 (or LIMIT 10).
+3. If the user question CANNOT be answered by the available columns in the dataset, set "canAnswer" to false, provide a polite explanation that the dataset does not contain that information, and leave "sql" empty.
+4. Suggest the best visualization type for this answer: 'bar', 'line', 'donut', or 'table'.
 
 Return strictly valid JSON:
 {
   "canAnswer": true | false,
   "sql": "SELECT ... FROM dataset ...",
   "explanation": "One sentence explaining what this query computes.",
-  "answer": "Plain-language executive answer or interpretation.",
+  "answer": "Preliminary explanation of the query and metrics requested.",
   "suggestedChart": "bar" | "line" | "donut" | "table"
 }`;
 
@@ -301,6 +304,70 @@ Return strictly valid JSON:
     return res.status(500).json({
       error: 'Failed to process question with AI agent',
       details: error.message,
+    });
+  }
+});
+
+// POST /api/chat/synthesize: Synthesizes a direct plain-language answer with exact calculated numbers and entities
+app.post('/api/chat/synthesize', async (req, res) => {
+  const { question, queryResults, sql, sqlExplanation } = req.body;
+
+  if (!question || !queryResults) {
+    return res.status(400).json({ error: 'Question and queryResults are required' });
+  }
+
+  if (!ai || queryResults.length === 0) {
+    return res.json({
+      plainAnswer: null,
+      topEntity: null,
+      topValue: null,
+    });
+  }
+
+  try {
+    const prompt = `You are the ASK AFEELIA DATA WORLD AI Data Agent.
+The user asked: "${question}"
+
+SQL Query Executed:
+${sql || 'SELECT * FROM dataset'}
+
+Exact Query Calculation Results (from active dataset):
+${JSON.stringify(queryResults.slice(0, 10), null, 2)}
+
+Task:
+Write a direct, authoritative, plain-language executive answer that calculates and explicitly states the exact answer.
+Requirements:
+1. Directly state the winning or primary entity (e.g. Department name, Category, Product) and the EXACT calculated figure (formatted with $, %, or commas where appropriate).
+   Example: If asked "Which department has the highest sale in first quarter?", answer: "The department with the highest sales in the first quarter is Electronics with $842,500.00."
+2. Mention secondary details or runner-up comparisons if there are multiple rows (e.g. "followed by Apparel at $512,000.00 and Home Goods at $310,200.00").
+3. Do NOT just say "Here are the query results" or describe the SQL. Answer the question in plain English right in the first sentence.
+4. Keep the response concise, executive, and conversational.
+
+Return strictly valid JSON:
+{
+  "plainAnswer": "Direct plain-language answer stating exact names and amounts.",
+  "topEntity": "e.g. Electronics",
+  "topValue": "e.g. $842,500.00",
+  "metricLabel": "e.g. Q1 SALES"
+}`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: prompt,
+      config: {
+        responseMimeType: 'application/json',
+      },
+    });
+
+    const text = response.text || '';
+    const cleanJson = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(cleanJson);
+    return res.json(parsed);
+  } catch (error: any) {
+    console.warn('Synthesis endpoint error, client fallback will be used:', error.message);
+    return res.json({
+      plainAnswer: null,
+      error: error.message,
     });
   }
 });

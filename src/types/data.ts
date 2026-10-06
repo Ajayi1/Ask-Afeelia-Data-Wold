@@ -55,6 +55,12 @@ export interface ChatMessage {
   canAnswer?: boolean;
   queryResults?: any[];
   chartType?: 'bar' | 'line' | 'donut' | 'table';
+  calculatedCard?: {
+    entity?: string;
+    metricLabel?: string;
+    value?: string | number;
+    subtext?: string;
+  };
 }
 
 export type FilterOperator = 'equals' | 'contains' | 'greater_than' | 'less_than' | 'not_equals';
